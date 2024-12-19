@@ -3,9 +3,18 @@ const path = require('path');
 const xml2js = require('xml2js');
 const https = require('https');
 const { mkdirp } = require('mkdirp')
+const { SocksProxyAgent } = require('socks-proxy-agent');
+const HttpProxyAgent = require('http-proxy-agent');
 
 // Maven阿里云镜像的基础URL
-const MAVEN_CENTRAL_URL = 'https://maven.aliyun.com/repository/public';
+const MAVEN_CENTRAL_URL = 'https://repo.maven.apache.org/maven2';
+
+// 代理配置
+const PROXY_CONFIG = {
+    // 根据实际情况配置代理
+    socks: 'socks5://127.0.0.1:11080', // 例如 'socks5://127.0.0.1:1080'
+    // http: process.env.HTTP_PROXY    // 例如 'http://127.0.0.1:8080'
+};
 
 // 解析版本号
 function resolveVersion(version, properties) {
@@ -77,20 +86,17 @@ function getDependencies(pomObj) {
         return dependencies;
     }
     
-    console.log('正在解析POM对象:', JSON.stringify(pomObj, null, 2));
-    
     if (pomObj.project && pomObj.project.dependencies && pomObj.project.dependencies[0].dependency) {
         console.log('找到依赖项部分');
         
         pomObj.project.dependencies[0].dependency.forEach(dep => {
-            console.log('正在处理依赖项:', dep);
             if (dep.groupId && dep.artifactId && dep.version && dep.version[0]) {
                 dependencies.push({
                     groupId: dep.groupId[0],
                     artifactId: dep.artifactId[0],
                     version: dep.version[0]
                 });
-                console.log('已添加依赖项:', {
+                console.log('处理依赖项:', {
                     groupId: dep.groupId[0],
                     artifactId: dep.artifactId[0],
                     version: dep.version[0]
@@ -103,7 +109,6 @@ function getDependencies(pomObj) {
         console.log('未找到依赖项或POM结构无效');
     }
     
-    console.log('最终依赖项列表:', dependencies);
     return dependencies;
 }
 
@@ -126,20 +131,37 @@ async function downloadDependency(dependency, repositoryPath) {
 
     try {
         // 下载jar文件
+        console.log(`开始下载JAR: ${MAVEN_CENTRAL_URL}/${artifactPath}/${jarName}`);
         await downloadFile(
             `${MAVEN_CENTRAL_URL}/${artifactPath}/${jarName}`,
             path.join(localPath, jarName)
         );
+        console.log(`JAR下载完成: ${jarName}`);
 
         // 下载pom文件以获取传递依赖
+        const pomFilePath = path.join(localPath, pomName);
+        console.log(`开始下载POM: ${MAVEN_CENTRAL_URL}/${artifactPath}/${pomName}`);
         await downloadFile(
             `${MAVEN_CENTRAL_URL}/${artifactPath}/${pomName}`,
-            path.join(localPath, pomName)
+            pomFilePath
         );
+        console.log(`POM下载完成: ${pomName}`);
+
+        // 检查下载的pom文件是否为空或不存在
+        if (!fs.existsSync(pomFilePath)) {
+            console.error(`POM文件不存在: ${pomName}`);
+            return;
+        }
+        const stats = fs.statSync(pomFilePath);
+        if (stats.size === 0) {
+            console.error(`下载的POM文件为空: ${pomName}`);
+            fs.unlinkSync(pomFilePath);
+            return;
+        }
 
         // 解析下载的pom文件获取传递依赖
         try {
-            const depPomObj = await parsePomXml(path.join(localPath, pomName));
+            const depPomObj = await parsePomXml(pomFilePath);
             if (depPomObj) {
                 const transitiveDeps = getDependencies(depPomObj);
                 
@@ -152,7 +174,7 @@ async function downloadDependency(dependency, repositoryPath) {
             console.error(`处理传递依赖时出错 ${jarName}:`, err);
         }
     } catch (err) {
-        console.error(`下载依赖时出错 ${jarName}:`, err);
+        console.error(`下载依赖时出错 ${jarName}:`, err.message);
     }
 }
 
@@ -160,12 +182,69 @@ async function downloadDependency(dependency, repositoryPath) {
 function downloadFile(url, dest) {
     return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(dest);
-        https.get(url, response => {
-            if (response.statusCode === 404) {
-                console.warn(`未找到文件: ${url}`);
+        const options = {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': '*/*'
+            }
+        };
+
+        // 配置代理
+        if (PROXY_CONFIG.socks) {
+            options.agent = new SocksProxyAgent(PROXY_CONFIG.socks);
+        } else if (PROXY_CONFIG.http) {
+            options.agent = new HttpProxyAgent(PROXY_CONFIG.http);
+        }
+
+        https.get(url, options, response => {
+            if (response.statusCode === 302 || response.statusCode === 301) {
+                const redirectUrl = response.headers.location;
+                console.log(`重定向到: ${redirectUrl}`);
                 file.close();
                 fs.unlink(dest, () => {});
-                resolve();
+                
+                https.get(redirectUrl, options, redirectResponse => {
+                    if (redirectResponse.statusCode === 404) {
+                        console.error(`未找到文件: ${redirectUrl}`);
+                        file.close();
+                        fs.unlink(dest, () => {});
+                        reject(new Error('文件未找到'));
+                        return;
+                    }
+
+                    if (redirectResponse.statusCode !== 200) {
+                        console.error(`下载失败，状态码: ${redirectResponse.statusCode}, URL: ${redirectUrl}`);
+                        file.close();
+                        fs.unlink(dest, () => {});
+                        reject(new Error(`HTTP状态码 ${redirectResponse.statusCode}`));
+                        return;
+                    }
+
+                    redirectResponse.pipe(file);
+                    file.on('finish', () => {
+                        file.close();
+                        resolve();
+                    });
+                }).on('error', err => {
+                    fs.unlink(dest, () => {});
+                    reject(err);
+                });
+                return;
+            }
+
+            if (response.statusCode === 404) {
+                console.error(`未找到文件: ${url}`);
+                file.close();
+                fs.unlink(dest, () => {});
+                reject(new Error('文件未找到'));
+                return;
+            }
+
+            if (response.statusCode !== 200) {
+                console.error(`下载失败，状态码: ${response.statusCode}, URL: ${url}`);
+                file.close();
+                fs.unlink(dest, () => {});
+                reject(new Error(`HTTP状态码 ${response.statusCode}`));
                 return;
             }
             
@@ -190,13 +269,13 @@ async function main() {
         // 确保repository文件夹存在
         await mkdirp(repositoryPath);
         
-        // 解析pom.xml
+        console.log('开始解析pom.xml...');
         const pomObj = await parsePomXml(pomPath);
         
-        // 获取所有依赖
+        console.log('获取依赖列表...');
         const dependencies = getDependencies(pomObj);
         
-        // 下载所有依赖
+        console.log('开始下载依赖...');
         for (const dep of dependencies) {
             if (dep.version) {
                 console.log(`正在下载 ${dep.groupId}:${dep.artifactId}:${dep.version}`);
@@ -206,9 +285,10 @@ async function main() {
             }
         }
         
-        console.log('所有依赖项下载成功！');
+        console.log('所有依赖项下载完成！');
     } catch (err) {
-        console.error('错误:', err);
+        console.error('程序执行出错:', err);
+        process.exit(1);
     }
 }
 

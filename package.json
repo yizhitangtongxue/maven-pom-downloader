@@ -10,9 +10,11 @@
   "license": "ISC",
   "devDependencies": {
     "fs": "0.0.1-security",
+    "http-proxy-agent": "^7.0.2",
     "https": "^1.0.0",
     "mkdirp": "^3.0.1",
     "path": "^0.12.7",
+    "socks-proxy-agent": "^8.0.5",
     "xml2js": "^0.6.2"
   }
 }
