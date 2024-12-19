@@ -7,8 +7,8 @@ const { SocksProxyAgent } = require('socks-proxy-agent');
 const HttpProxyAgent = require('http-proxy-agent');
 const cliProgress = require('cli-progress');
 
-// Maven镜像的基础URL
-const MAVEN_CENTRAL_URL = 'https://repo.maven.apache.org/maven2';
+// Maven镜像的基础URL - 使用Maven中央仓库
+const MAVEN_CENTRAL_URL = 'https://repo1.maven.org/maven2';
 
 // 代理配置
 const PROXY_CONFIG = {
@@ -16,6 +16,9 @@ const PROXY_CONFIG = {
     socks: 'socks5://127.0.0.1:11080', // 例如 'socks5://127.0.0.1:1080'
     http: null // 例如 'http://127.0.0.1:8080'
 };
+
+// 并发下载配置
+const CONCURRENT_DOWNLOADS = 5; // 同时下载的最大数量
 
 // 用于记录已下载的依赖
 const downloadedDependencies = new Set();
@@ -181,26 +184,29 @@ async function downloadDependency(dependency, repositoryPath) {
     const pomFilePath = path.join(localPath, pomName);
 
     try {
+        const downloadTasks = [];
+
         // 检查jar文件是否已存在
-        if (fs.existsSync(localJarPath)) {
-            log(`JAR文件已存在，跳过下载: ${jarName}`);
-        } else {
-            // 下载jar文件
+        if (!fs.existsSync(localJarPath)) {
             const jarUrl = `${MAVEN_CENTRAL_URL}/${artifactPath}/${jarName}`;
             log(`开始下载JAR: ${jarUrl}`);
-            await downloadFile(jarUrl, localJarPath);
-            log(`JAR下载完成: ${jarName}`);
+            downloadTasks.push(downloadFile(jarUrl, localJarPath));
+        } else {
+            log(`JAR文件已存在，跳过下载: ${jarName}`);
         }
 
         // 检查pom文件是否已存在
-        if (fs.existsSync(pomFilePath)) {
-            log(`POM文件已存在，跳过下载: ${pomName}`);
-        } else {
-            // 下载pom文件以获取传递依赖
+        if (!fs.existsSync(pomFilePath)) {
             const pomUrl = `${MAVEN_CENTRAL_URL}/${artifactPath}/${pomName}`;
             log(`开始下载POM: ${pomUrl}`);
-            await downloadFile(pomUrl, pomFilePath);
-            log(`POM下载完成: ${pomName}`);
+            downloadTasks.push(downloadFile(pomUrl, pomFilePath));
+        } else {
+            log(`POM文件已存在，跳过下载: ${pomName}`);
+        }
+
+        // 并行下载jar和pom文件
+        if (downloadTasks.length > 0) {
+            await Promise.all(downloadTasks);
         }
 
         // 检查下载的pom文件是否为空或不存在
@@ -221,9 +227,14 @@ async function downloadDependency(dependency, repositoryPath) {
             if (depPomObj) {
                 const transitiveDeps = getDependencies(depPomObj);
                 
-                // 递归下载传递依赖
-                for (const dep of transitiveDeps) {
-                    await downloadDependency(dep, repositoryPath);
+                // 并发下载传递依赖
+                const chunks = [];
+                for (let i = 0; i < transitiveDeps.length; i += CONCURRENT_DOWNLOADS) {
+                    chunks.push(transitiveDeps.slice(i, i + CONCURRENT_DOWNLOADS));
+                }
+
+                for (const chunk of chunks) {
+                    await Promise.all(chunk.map(dep => downloadDependency(dep, repositoryPath)));
                 }
             }
         } catch (err) {
@@ -242,7 +253,8 @@ function downloadFile(url, dest) {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Accept': '*/*'
-            }
+            },
+            timeout: 10000 // 设置10秒超时
         };
 
         // 配置代理
@@ -362,14 +374,23 @@ async function main() {
         progressBar.start(totalDeps, 0, {
             currentDep: '准备开始'
         });
-        
-        for (let i = 0; i < dependencies.length; i++) {
-            const dep = dependencies[i];
-            if (dep.version) {
-                const currentDep = `${dep.groupId}:${dep.artifactId}:${dep.version}`;
-                progressBar.update(i + 1, { currentDep });
-                await downloadDependency(dep, repositoryPath);
-            }
+
+        // 并发下载依赖
+        const chunks = [];
+        for (let i = 0; i < dependencies.length; i += CONCURRENT_DOWNLOADS) {
+            chunks.push(dependencies.slice(i, i + CONCURRENT_DOWNLOADS));
+        }
+
+        let completedCount = 0;
+        for (const chunk of chunks) {
+            await Promise.all(chunk.map(async dep => {
+                if (dep.version) {
+                    const currentDep = `${dep.groupId}:${dep.artifactId}:${dep.version}`;
+                    await downloadDependency(dep, repositoryPath);
+                    completedCount++;
+                    progressBar.update(completedCount, { currentDep });
+                }
+            }));
         }
         
         progressBar.stop();
