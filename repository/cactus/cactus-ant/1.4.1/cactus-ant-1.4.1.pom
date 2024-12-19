@@ -1,0 +1,6 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>cactus</groupId>
+  <artifactId>cactus-ant</artifactId>
+  <version>1.4.1</version>
+</project>

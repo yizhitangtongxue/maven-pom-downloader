@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?><project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>javax.jdo</groupId>
+  <artifactId>jdo2-api</artifactId>
+  <name>JDO2 API</name>
+  <version>2.0</version>
+  <description>The Java Data Objects 2.0 (JDO) API is a standard interface-based 
+Java model abstraction of persistence, developed as Java Specification 
+Request 243 under the auspices of the Java Community Process.</description>
+  <scm />
+  <build>
+    <sourceDirectory>src/java</sourceDirectory>
+    <testSourceDirectory>test/java</testSourceDirectory>
+    <resources>
+      <resource>
+        <directory>${basedir}/src/java</directory>
+        <includes>
+          <include>javax/jdo/*.properties</include>
+        </includes>
+      </resource>
+      <resource>
+        <directory>${basedir}/src/schema</directory>
+        <includes>
+          <include>javax/jdo/*.dtd</include>
+          <include>javax/jdo/*.xsd</include>
+        </includes>
+      </resource>
+    </resources>
+    <testResources>
+      <testResource>
+        <directory>${basedir}/test/schema</directory>
+        <includes>
+          <include>**/*.jdo</include>
+          <include>**/*.jdoquery</include>
+          <include>**/*.orm</include>
+        </includes>
+      </testResource>
+    </testResources>
+    <plugins>
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <includes>
+            <include>**/*Test.java</include>
+          </includes>
+          <excludes>
+            <exclude>javax/jdo/util/AbstractTest.java</exclude>
+            <exclude>javax/jdo/pc/*.java</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+  <dependencies>
+    <dependency>
+      <groupId>geronimo-spec</groupId>
+      <artifactId>geronimo-spec-jta</artifactId>
+      <version>1.0.1B-rc2</version>
+    </dependency>
+    <dependency>
+      <groupId>xerces</groupId>
+      <artifactId>xerces</artifactId>
+      <version>2.4.0</version>
+      <optional>true</optional>
+    </dependency>
+	<dependency>
+      <groupId>xml-apis</groupId>
+      <artifactId>xml-apis</artifactId>
+      <version>1.0.b2</version>
+      <optional>true</optional>
+    </dependency>
+  </dependencies>
+</project>

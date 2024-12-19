@@ -5,16 +5,39 @@ const https = require('https');
 const { mkdirp } = require('mkdirp')
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const HttpProxyAgent = require('http-proxy-agent');
+const cliProgress = require('cli-progress');
 
-// Maven阿里云镜像的基础URL
+// Maven镜像的基础URL
 const MAVEN_CENTRAL_URL = 'https://repo.maven.apache.org/maven2';
 
 // 代理配置
 const PROXY_CONFIG = {
-    // 根据实际情况配置代理
+    enabled: true, // 是否启用代理
     socks: 'socks5://127.0.0.1:11080', // 例如 'socks5://127.0.0.1:1080'
-    // http: process.env.HTTP_PROXY    // 例如 'http://127.0.0.1:8080'
+    http: null // 例如 'http://127.0.0.1:8080'
 };
+
+// 用于记录已下载的依赖
+const downloadedDependencies = new Set();
+
+// 创建日志文件流
+const logStream = fs.createWriteStream('maven-download.log', { flags: 'a' });
+
+// 日志函数
+function log(message, ...args) {
+    const now = new Date();
+    const timestamp = now.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    const logMessage = `[${timestamp}] ${message} ${args.join(' ')}\n`;
+    logStream.write(logMessage);
+}
 
 // 解析版本号
 function resolveVersion(version, properties) {
@@ -43,6 +66,13 @@ function resolveVersion(version, properties) {
             return current;
         }
     }
+    
+    // 处理版本范围格式
+    if (version.includes('[') && version.includes(']') || version.includes('(') || version.includes(')')) {
+        const versionRange = parseVersionRange(version);
+        return versionRange.min || version; // 暂时使用范围中的最小版本
+    }
+    
     return version;
 }
 
@@ -82,12 +112,12 @@ async function parsePomXml(pomPath) {
 function getDependencies(pomObj) {
     const dependencies = [];
     if (!pomObj) {
-        console.log('POM对象为空');
+        log('POM对象为空');
         return dependencies;
     }
     
     if (pomObj.project && pomObj.project.dependencies && pomObj.project.dependencies[0].dependency) {
-        console.log('找到依赖项部分');
+        log('找到依赖项部分');
         
         pomObj.project.dependencies[0].dependency.forEach(dep => {
             if (dep.groupId && dep.artifactId && dep.version && dep.version[0]) {
@@ -96,17 +126,17 @@ function getDependencies(pomObj) {
                     artifactId: dep.artifactId[0],
                     version: dep.version[0]
                 });
-                console.log('处理依赖项:', {
+                log('处理依赖项:', JSON.stringify({
                     groupId: dep.groupId[0],
                     artifactId: dep.artifactId[0],
                     version: dep.version[0]
-                });
+                }));
             } else {
-                console.warn('跳过无效依赖项:', dep);
+                log('跳过无效依赖项:', JSON.stringify(dep));
             }
         });
     } else {
-        console.log('未找到依赖项或POM结构无效');
+        log('未找到依赖项或POM结构无效');
     }
     
     return dependencies;
@@ -118,43 +148,69 @@ async function downloadDependency(dependency, repositoryPath) {
     
     // 验证所有必需字段
     if (!groupId || !artifactId || !version) {
-        console.warn('跳过无效依赖:', dependency);
+        log('跳过无效依赖:', JSON.stringify(dependency));
+        return;
+    }
+
+    // 检查是否已下载过该依赖
+    const dependencyKey = `${groupId}:${artifactId}:${version}`;
+    if (downloadedDependencies.has(dependencyKey)) {
+        log(`依赖已处理过，跳过: ${dependencyKey}`);
         return;
     }
     
-    const artifactPath = groupId.replace(/\./g, '/') + '/' + artifactId + '/' + version;
-    const jarName = `${artifactId}-${version}.jar`;
-    const pomName = `${artifactId}-${version}.pom`;
+    // 标记该依赖为已下载
+    downloadedDependencies.add(dependencyKey);
+    
+    // 处理版本范围
+    let actualVersion = version;
+    if (version.includes('[') || version.includes('(')) {
+        const versionRange = parseVersionRange(version);
+        actualVersion = versionRange.min;
+        log(`版本范围 ${version} 使用最小版本: ${actualVersion}`);
+    }
+    
+    const artifactPath = groupId.replace(/\./g, '/') + '/' + artifactId + '/' + actualVersion;
+    const jarName = `${artifactId}-${actualVersion}.jar`;
+    const pomName = `${artifactId}-${actualVersion}.pom`;
     
     const localPath = path.join(repositoryPath, artifactPath);
     await mkdirp(localPath);
 
-    try {
-        // 下载jar文件
-        console.log(`开始下载JAR: ${MAVEN_CENTRAL_URL}/${artifactPath}/${jarName}`);
-        await downloadFile(
-            `${MAVEN_CENTRAL_URL}/${artifactPath}/${jarName}`,
-            path.join(localPath, jarName)
-        );
-        console.log(`JAR下载完成: ${jarName}`);
+    const localJarPath = path.join(localPath, jarName);
+    const pomFilePath = path.join(localPath, pomName);
 
-        // 下载pom文件以获取传递依赖
-        const pomFilePath = path.join(localPath, pomName);
-        console.log(`开始下载POM: ${MAVEN_CENTRAL_URL}/${artifactPath}/${pomName}`);
-        await downloadFile(
-            `${MAVEN_CENTRAL_URL}/${artifactPath}/${pomName}`,
-            pomFilePath
-        );
-        console.log(`POM下载完成: ${pomName}`);
+    try {
+        // 检查jar文件是否已存在
+        if (fs.existsSync(localJarPath)) {
+            log(`JAR文件已存在，跳过下载: ${jarName}`);
+        } else {
+            // 下载jar文件
+            const jarUrl = `${MAVEN_CENTRAL_URL}/${artifactPath}/${jarName}`;
+            log(`开始下载JAR: ${jarUrl}`);
+            await downloadFile(jarUrl, localJarPath);
+            log(`JAR下载完成: ${jarName}`);
+        }
+
+        // 检查pom文件是否已存在
+        if (fs.existsSync(pomFilePath)) {
+            log(`POM文件已存在，跳过下载: ${pomName}`);
+        } else {
+            // 下载pom文件以获取传递依赖
+            const pomUrl = `${MAVEN_CENTRAL_URL}/${artifactPath}/${pomName}`;
+            log(`开始下载POM: ${pomUrl}`);
+            await downloadFile(pomUrl, pomFilePath);
+            log(`POM下载完成: ${pomName}`);
+        }
 
         // 检查下载的pom文件是否为空或不存在
         if (!fs.existsSync(pomFilePath)) {
-            console.error(`POM文件不存在: ${pomName}`);
+            log(`POM文件不存在: ${pomName}`);
             return;
         }
         const stats = fs.statSync(pomFilePath);
         if (stats.size === 0) {
-            console.error(`下载的POM文件为空: ${pomName}`);
+            log(`下载的POM文件为空: ${pomName}`);
             fs.unlinkSync(pomFilePath);
             return;
         }
@@ -171,10 +227,10 @@ async function downloadDependency(dependency, repositoryPath) {
                 }
             }
         } catch (err) {
-            console.error(`处理传递依赖时出错 ${jarName}:`, err);
+            log(`处理传递依赖时出错 ${jarName}:`, err.toString());
         }
     } catch (err) {
-        console.error(`下载依赖时出错 ${jarName}:`, err.message);
+        log(`下载依赖时出错 ${jarName}:`, err.message);
     }
 }
 
@@ -190,22 +246,24 @@ function downloadFile(url, dest) {
         };
 
         // 配置代理
-        if (PROXY_CONFIG.socks) {
-            options.agent = new SocksProxyAgent(PROXY_CONFIG.socks);
-        } else if (PROXY_CONFIG.http) {
-            options.agent = new HttpProxyAgent(PROXY_CONFIG.http);
+        if (PROXY_CONFIG.enabled) {
+            if (PROXY_CONFIG.socks) {
+                options.agent = new SocksProxyAgent(PROXY_CONFIG.socks);
+            } else if (PROXY_CONFIG.http) {
+                options.agent = new HttpProxyAgent(PROXY_CONFIG.http);
+            }
         }
 
         https.get(url, options, response => {
             if (response.statusCode === 302 || response.statusCode === 301) {
                 const redirectUrl = response.headers.location;
-                console.log(`重定向到: ${redirectUrl}`);
+                log(`重定向到: ${redirectUrl}`);
                 file.close();
                 fs.unlink(dest, () => {});
                 
                 https.get(redirectUrl, options, redirectResponse => {
                     if (redirectResponse.statusCode === 404) {
-                        console.error(`未找到文件: ${redirectUrl}`);
+                        log(`未找到文件: ${redirectUrl}`);
                         file.close();
                         fs.unlink(dest, () => {});
                         reject(new Error('文件未找到'));
@@ -213,12 +271,19 @@ function downloadFile(url, dest) {
                     }
 
                     if (redirectResponse.statusCode !== 200) {
-                        console.error(`下载失败，状态码: ${redirectResponse.statusCode}, URL: ${redirectUrl}`);
+                        log(`下载失败，状态码: ${redirectResponse.statusCode}, URL: ${redirectUrl}`);
                         file.close();
                         fs.unlink(dest, () => {});
                         reject(new Error(`HTTP状态码 ${redirectResponse.statusCode}`));
                         return;
                     }
+
+                    const totalSize = parseInt(redirectResponse.headers['content-length'], 10);
+                    let downloadedSize = 0;
+
+                    redirectResponse.on('data', (chunk) => {
+                        downloadedSize += chunk.length;
+                    });
 
                     redirectResponse.pipe(file);
                     file.on('finish', () => {
@@ -233,7 +298,7 @@ function downloadFile(url, dest) {
             }
 
             if (response.statusCode === 404) {
-                console.error(`未找到文件: ${url}`);
+                log(`未找到文件: ${url}`);
                 file.close();
                 fs.unlink(dest, () => {});
                 reject(new Error('文件未找到'));
@@ -241,12 +306,19 @@ function downloadFile(url, dest) {
             }
 
             if (response.statusCode !== 200) {
-                console.error(`下载失败，状态码: ${response.statusCode}, URL: ${url}`);
+                log(`下载失败，状态码: ${response.statusCode}, URL: ${url}`);
                 file.close();
                 fs.unlink(dest, () => {});
                 reject(new Error(`HTTP状态码 ${response.statusCode}`));
                 return;
             }
+            
+            const totalSize = parseInt(response.headers['content-length'], 10);
+            let downloadedSize = 0;
+            
+            response.on('data', (chunk) => {
+                downloadedSize += chunk.length;
+            });
             
             response.pipe(file);
             file.on('finish', () => {
@@ -269,28 +341,65 @@ async function main() {
         // 确保repository文件夹存在
         await mkdirp(repositoryPath);
         
-        console.log('开始解析pom.xml...');
-        const pomObj = await parsePomXml(pomPath);
-        
-        console.log('获取依赖列表...');
-        const dependencies = getDependencies(pomObj);
-        
-        console.log('开始下载依赖...');
-        for (const dep of dependencies) {
-            if (dep.version) {
-                console.log(`正在下载 ${dep.groupId}:${dep.artifactId}:${dep.version}`);
-                await downloadDependency(dep, repositoryPath);
-            } else {
-                console.warn(`跳过未定义版本的依赖: ${dep.groupId}:${dep.artifactId}`);
+        // 提示代理配置
+        if (PROXY_CONFIG.enabled) {
+            if (PROXY_CONFIG.socks) {
+                log(`使用SOCKS代理: ${PROXY_CONFIG.socks}`);
+            } else if (PROXY_CONFIG.http) {
+                log(`使用HTTP代理: ${PROXY_CONFIG.http}`);
             }
         }
         
-        console.log('所有依赖项下载完成！');
+        const pomObj = await parsePomXml(pomPath);
+        const dependencies = getDependencies(pomObj);
+        
+        const totalDeps = dependencies.length;
+        const progressBar = new cliProgress.SingleBar({
+            format: '下载进度 |{bar}| {percentage}% | {value}/{total} | {currentDep}',
+            barCompleteChar: '\u2588',
+            barIncompleteChar: '\u2591'
+        });
+        progressBar.start(totalDeps, 0, {
+            currentDep: '准备开始'
+        });
+        
+        for (let i = 0; i < dependencies.length; i++) {
+            const dep = dependencies[i];
+            if (dep.version) {
+                const currentDep = `${dep.groupId}:${dep.artifactId}:${dep.version}`;
+                progressBar.update(i + 1, { currentDep });
+                await downloadDependency(dep, repositoryPath);
+            }
+        }
+        
+        progressBar.stop();
     } catch (err) {
-        console.error('程序执行出错:', err);
+        log('程序执行出错:', err.toString());
         process.exit(1);
     }
 }
 
 // 运行程序
 main();
+
+// 版本范围解析函数
+function parseVersionRange(versionRange) {
+    // 移除所有空格
+    versionRange = versionRange.trim();
+    
+    // 处理 [x.x,) 格式 - 表示大于等于某版本
+    if (versionRange.startsWith('[') && versionRange.endsWith(')')) {
+        const minVersion = versionRange.slice(1, -2);
+        return {
+            min: minVersion,
+            includeMin: true,
+            max: null,
+            includeMax: false
+        };
+    }
+    
+    // 如果是具体版本号，直接返回
+    return {
+        exact: versionRange
+    };
+}

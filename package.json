@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "cli-progress": "^3.12.0",
     "fs": "0.0.1-security",
     "http-proxy-agent": "^7.0.2",
     "https": "^1.0.0",

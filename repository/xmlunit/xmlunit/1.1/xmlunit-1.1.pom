@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<!--
+
+  This POM is not usable as means to build XMLUnit with Maven2, it is
+  a minimal POM to allow XMLUnit's artifacts to be added to a Maven
+  repository.
+
+-->
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>xmlunit</groupId>
+  <artifactId>xmlunit</artifactId>
+  <packaging>jar</packaging>
+  <name>XMLUnit for Java</name>
+  <version>1.1</version>
+  <url>http://xmlunit.sourceforge.net/</url>
+  <description>XMLUnit compares a control XML document to a test document or the result of a transformation, validates documents, and compares the results of XPath expressions.</description>
+  <licenses>
+    <license>
+      <name>BSD License</name>
+      <url>http://xmlunit.svn.sourceforge.net/viewvc/*checkout*/xmlunit/trunk/xmlunit/LICENSE.txt</url>
+    </license>
+  </licenses>
+  <scm>
+    <url>http://xmlunit.svn.sourceforge.net/viewvc/xmlunit/</url>
+  </scm>
+  <dependencies>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>3.8.2</version>
+      <optional>true</optional>
+    </dependency>
+  </dependencies>
+</project>

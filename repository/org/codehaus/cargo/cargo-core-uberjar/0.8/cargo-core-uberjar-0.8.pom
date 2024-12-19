@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.codehaus.cargo</groupId>
+    <artifactId>cargo-core</artifactId>
+    <version>0.8</version>
+  </parent>
+  <artifactId>cargo-core-uberjar</artifactId>
+  <packaging>pom</packaging>
+  <name>Cargo Core Uberjar</name>
+  <description>The Cargo Core Uberjar</description>
+  <scm>
+    <connection>scm:svn:svn://svn.cargo.codehaus.org/cargo/scm/cargo/trunk/core/distribution</connection>
+    <url>http://svn.cargo.codehaus.org/</url>
+  </scm>
+  <dependencies>
+    <!-- All dependencoes are defined with a test scope. Ideally they should be using a provided
+         scope but doing this make them not being included in the uberjar. The reason we don't
+         want a compile scope is because otherwise users of the uberjar will find their m2 build
+         depending transitively on the individual dependencies thus getting the Cargo classes
+         twice in their classpaths... -->
+    <dependency>
+      <groupId>org.codehaus.cargo</groupId>
+      <artifactId>cargo-core-api-generic</artifactId>
+      <version>${version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.cargo</groupId>
+      <artifactId>cargo-core-container-geronimo</artifactId>
+      <version>${version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.cargo</groupId>
+      <artifactId>cargo-core-container-jboss</artifactId>
+      <version>${version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.cargo</groupId>
+      <artifactId>cargo-core-container-jetty</artifactId>
+      <version>${version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.cargo</groupId>
+      <artifactId>cargo-core-container-jo</artifactId>
+      <version>${version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.cargo</groupId>
+      <artifactId>cargo-core-container-resin</artifactId>
+      <version>${version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.cargo</groupId>
+      <artifactId>cargo-core-container-tomcat</artifactId>
+      <version>${version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.cargo</groupId>
+      <artifactId>cargo-core-container-orion</artifactId>
+      <version>${version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.cargo</groupId>
+      <artifactId>cargo-core-container-weblogic</artifactId>
+      <version>${version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <configuration>
+          <descriptor>src/assemble/main.xml</descriptor>
+        </configuration>
+        <!-- Note 1: We need to turn this off because of http://jira.codehaus.org/browse/MNG-1684 -->
+        <!-- Note 2: Binding to the verify phase because of http://jira.codehaus.org/browse/MNG-1311 -->
+        <!--
+        <executions>
+          <execution>
+
+            <phase>verify</phase>
+            <goals>
+              <goal>attached</goal>
+            </goals>
+          </execution>
+        </executions>
+        -->
+      </plugin>
+    </plugins>
+  </build>
+</project>

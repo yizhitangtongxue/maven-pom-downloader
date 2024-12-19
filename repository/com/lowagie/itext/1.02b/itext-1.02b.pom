@@ -1,0 +1,7 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.lowagie</groupId>
+  <artifactId>itext</artifactId>
+  <name>iText</name>
+  <version>1.02b</version>
+</project>

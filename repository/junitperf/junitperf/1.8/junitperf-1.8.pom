@@ -1,0 +1,6 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>junitperf</groupId>
+  <artifactId>junitperf</artifactId>
+  <version>1.8</version>
+</project>
