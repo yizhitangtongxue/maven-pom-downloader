@@ -28,3 +28,4 @@ components.d.ts
 
 repository/
 maven-download.log
+pom.xml
